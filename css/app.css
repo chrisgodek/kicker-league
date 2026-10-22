@@ -222,3 +222,10 @@ td.score { font-weight: 700; }
 td.score.pos { color: var(--accent); }
 td.score.neg { color: var(--muted); }
 .card-head .controls { margin: 0; }
+.draft-cols { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2.2fr); gap: 16px; align-items: start; }
+.draft-cols > .card { margin: 0; min-width: 0; }
+@media (max-width: 860px) { .draft-cols { grid-template-columns: minmax(0, 1fr); } }
+.actions-cell { white-space: nowrap; text-align: right; }
+.actions-cell button + button { margin-left: 6px; }
+label.switch { font-size: 0.9rem; }
+.draft-cols + .card, .table-wrap + .draft-cols { margin-top: 16px; }

@@ -1,5 +1,5 @@
 // "Stats from" picker shared by the Draft and Players tabs: one of the last three seasons, or a blend,
-// with Kicker Score ranks for whichever is chosen.
+// with Leg Index ranks for whichever is chosen.
 import { sb, rows } from './supa.js';
 import { emptyTotals, addWeek, withRates, formatStat } from './data.js';
 import { rankKickers, blendRanks, sumTotals, formatScore, SCORE_HELP } from './rank.js';
@@ -68,7 +68,7 @@ export async function statPicker(L) {
   };
 }
 
-// Sorting: 'rank' uses Kicker Score; anything else is a stat key (higher is better).
+// Sorting: 'rank' uses Leg Index; anything else is a stat key (higher is better).
 export function sortKickers(list, picker, sort) {
   const val = (id) => (sort === 'rank' ? (picker.rank(id)?.score ?? -99) : (picker.stats(id)[sort] ?? -1));
   return list.sort((a, b) => val(b.id) - val(a.id) || a.name.localeCompare(b.name));
@@ -77,7 +77,7 @@ export function sortKickers(list, picker, sort) {
 export function statHeaders(cats, sort) {
   const th = (key, label, title = '') =>
     `<th class="num sortable ${sort === key ? 'sorted' : ''}" data-sort="${key}" title="${esc(title)}">${label}${sort === key ? ' ▾' : ''}</th>`;
-  return `${th('rank', 'Score', SCORE_HELP)}<th class="num" title="Games with a kick">G</th>${cats.map((c) => th(c.key, c.label, c.title)).join('')}`;
+  return `${th('rank', 'Leg Index', SCORE_HELP)}<th class="num" title="Games with a kick">G</th>${cats.map((c) => th(c.key, c.label, c.title)).join('')}`;
 }
 
 export function statCells(id, picker, cats) {

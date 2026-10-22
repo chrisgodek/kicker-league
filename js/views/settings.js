@@ -1,6 +1,9 @@
 // League tab: invite link, teams, and (for the commissioner) settings, draft order, roster fixes, reset.
 import { rpc } from '../supa.js';
 import { $, $$, esc, busy, toast, confirmBox } from '../ui.js';
+import { clockLabel } from './draft.js';
+
+const CLOCKS = [30, 60, 90, 120, 300, 3600, 14400, 28800, 86400, null];
 
 export async function renderSettings({ L, reload, root }) {
   const lg = L.league;
@@ -67,8 +70,11 @@ export async function renderSettings({ L, reload, root }) {
           <label>Adds per team
             <input name="adds" type="number" min="0" max="100" value="${lg.add_limit}">
           </label>
-          <label>Pick clock (sec)
-            <input name="clock" type="number" min="15" max="600" value="${lg.pick_seconds}">
+          <label>Pick clock
+            <select name="clock">
+              <optgroup label="Live draft">${CLOCKS.slice(0, 5).map((v) => `<option value="${v}" ${v === lg.pick_seconds ? 'selected' : ''}>${clockLabel(v)}</option>`).join('')}</optgroup>
+              <optgroup label="Slow draft (over days)">${CLOCKS.slice(5).map((v) => `<option value="${v ?? ''}" ${v === lg.pick_seconds ? 'selected' : ''}>${clockLabel(v)}</option>`).join('')}</optgroup>
+            </select>
           </label>
         </div>
         <label class="check"><input type="checkbox" name="clutch" ${lg.clutch ? 'checked' : ''} ${setup ? '' : 'disabled'}> Clutch FGs category (go-ahead or tying FGs in the last 2:00 or OT)</label>
@@ -172,7 +178,7 @@ export async function renderSettings({ L, reload, root }) {
     busy(f.querySelector('[type=submit]'), async () => {
       await rpc('update_league_settings', {
         p_league: L.id, p_name: f.name.value, p_start_week: +f.start.value, p_clutch: f.clutch.checked,
-        p_add_limit: +f.adds.value, p_pick_seconds: +f.clock.value,
+        p_add_limit: +f.adds.value, p_pick_seconds: f.clock.value === '' ? null : +f.clock.value,
       });
       toast('Settings saved');
       reload();

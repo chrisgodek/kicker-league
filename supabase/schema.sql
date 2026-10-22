@@ -61,7 +61,7 @@ create table if not exists public.leagues (
   start_week   int  not null default 1 check (start_week between 1 and 18),
   clutch       boolean not null default false,
   add_limit    int  not null default 20 check (add_limit between 0 and 100),
-  pick_seconds int  not null default 90 check (pick_seconds between 15 and 600),
+  pick_seconds int  default 90,                   -- null = no time limit
   clock_started_at timestamptz,
   created_at   timestamptz not null default now()
 );
@@ -76,6 +76,13 @@ create table if not exists public.teams (
   created_at timestamptz not null default now(),
   unique (league_id, draft_slot)
 );
+-- Changes for tables that already existed.
+alter table public.leagues alter column pick_seconds drop not null;
+alter table public.leagues drop constraint if exists leagues_pick_seconds_check;
+alter table public.leagues add constraint leagues_pick_seconds_check
+  check (pick_seconds is null or pick_seconds between 15 and 86400);
+alter table public.teams add column if not exists autodraft boolean not null default false;
+
 create unique index if not exists teams_one_per_owner on public.teams (league_id, owner) where owner is not null;
 
 create table if not exists public.rosters (
@@ -129,6 +136,15 @@ create table if not exists public.draft_picks (
   made_at   timestamptz not null default now(),
   primary key (league_id, pick_no),
   unique (league_id, kicker_id)
+);
+
+-- Each team's private ranked wish list; auto-picks take from it first.
+create table if not exists public.draft_queue (
+  league_id uuid not null references public.leagues on delete cascade,
+  team_id   uuid not null references public.teams on delete cascade,
+  kicker_id text not null,
+  pos       int  not null,
+  primary key (team_id, kicker_id)
 );
 
 create table if not exists public.transactions (
@@ -438,6 +454,9 @@ begin
     perform set_draft_order(p_league, null);
   end if;
   update leagues set status = 'drafting', clock_started_at = now() where id = p_league;
+  if (select autodraft from teams where id = team_on_clock(p_league)) then
+    perform _pick(p_league, _auto_choice(p_league, team_on_clock(p_league)), true);
+  end if;
 end $$;
 
 -- Internal: record a pick for whoever is on the clock (permission checks done by callers).
@@ -457,8 +476,10 @@ begin
   n := (select count(*) from draft_picks where league_id = p_league) + 1;
   insert into draft_picks (league_id, pick_no, team_id, kicker_id, auto) values (p_league, n, tm, p_kicker, p_auto);
   insert into rosters (league_id, kicker_id, team_id, how) values (p_league, p_kicker, tm, 'draft');
+  delete from draft_queue where league_id = p_league and kicker_id = p_kicker;
   insert into transactions (league_id, team_id, kind, kicker_id, detail)
-  values (p_league, tm, 'draft', p_kicker, 'Pick ' || n || ': ' || kicker_name(lg.season, p_kicker));
+  values (p_league, tm, 'draft', p_kicker, 'Pick ' || n || ': ' || kicker_name(lg.season, p_kicker)
+          || case when p_auto then ' (auto)' else '' end);
 
   if n >= lg.size * 3 then
     -- Draft done: each team starts its first two picks.
@@ -471,6 +492,11 @@ begin
     where rn <= 2;
   else
     update leagues set clock_started_at = now() where id = p_league;
+    -- Next team has autodraft on: pick for them right away.
+    tm := team_on_clock(p_league);
+    if (select autodraft from teams where id = tm) then
+      perform _pick(p_league, _auto_choice(p_league, tm), true);
+    end if;
   end if;
 end $$;
 
@@ -484,7 +510,7 @@ begin
   perform _pick(p_league, p_kicker, false);
 end $$;
 
--- Kicker Score for one season. Same formula as js/rank.js: per-game z-scores for each roto category
+-- Leg Index for one season. Same formula as js/rank.js: per-game z-scores for each roto category
 -- (FG%/XP% as makes above average on the same attempts, Avg Dist as yards above average), summed,
 -- then pulled toward average for small samples: × games / (games + 3).
 create or replace function public.kicker_scores(p_season int, p_clutch boolean default false)
@@ -542,27 +568,76 @@ language sql stable set search_path = public as $$
   group by ks.kicker_id;
 $$;
 
+-- Who an automatic pick takes: the team's queue first, then the best available by 3-year Leg Index.
+create or replace function public._auto_choice(p_league uuid, p_team uuid) returns text
+language sql stable security definer set search_path = public as $$
+  with lg as (select season, clutch from leagues where id = p_league)
+  select coalesce(
+    (select q.kicker_id from draft_queue q, lg
+      where q.team_id = p_team
+        and not exists (select 1 from rosters r where r.league_id = p_league and r.kicker_id = q.kicker_id)
+        and exists (select 1 from nfl_kickers nk where nk.season = lg.season and nk.id = q.kicker_id
+                    and nk.status <> 'non-kicker')
+      order by q.pos limit 1),
+    (select nk.id from lg cross join nfl_kickers nk
+      left join kicker_scores_blend(lg.season, lg.clutch) s on s.kicker_id = nk.id
+      where nk.season = lg.season and nk.status = 'active'
+        and not exists (select 1 from rosters r where r.league_id = p_league and r.kicker_id = nk.id)
+      order by coalesce(s.score, -99) desc, nk.name limit 1));
+$$;
+
 -- Anyone in the league can trigger this once the pick clock runs out; the team on the
--- clock or the commissioner can use it any time.
+-- clock or the commissioner can use it any time. With no time limit, the clock never runs out.
 create or replace function public.auto_pick(p_league uuid) returns void
 language plpgsql security definer set search_path = public as $$
-declare lg leagues; k text;
+declare lg leagues; tm uuid;
 begin
   select * into lg from leagues where id = p_league;
   if lg.status <> 'drafting' then raise exception 'The draft is not running'; end if;
-  if not (can_manage(team_on_clock(p_league)) or is_commish(p_league)
-          or (is_member(p_league) and now() >= lg.clock_started_at + make_interval(secs => lg.pick_seconds))) then
+  tm := team_on_clock(p_league);
+  if not (can_manage(tm) or is_commish(p_league)
+          or (is_member(p_league) and lg.pick_seconds is not null
+              and now() >= lg.clock_started_at + make_interval(secs => lg.pick_seconds))) then
     raise exception 'The pick clock hasn''t run out';
   end if;
-  -- Best available by 3-year blended Kicker Score.
-  select nk.id into k from nfl_kickers nk
-  left join kicker_scores_blend(lg.season, lg.clutch) s on s.kicker_id = nk.id
-  where nk.season = lg.season and nk.status = 'active'
-    and not exists (select 1 from rosters r where r.league_id = p_league and r.kicker_id = nk.id)
-  order by coalesce(s.score, -99) desc, nk.name
-  limit 1;
-  if k is null then raise exception 'No kickers left'; end if;
-  perform _pick(p_league, k, true);
+  perform _pick(p_league, _auto_choice(p_league, tm), true);
+end $$;
+
+-- Runs every minute: makes the automatic pick wherever a pick clock has expired,
+-- so drafts keep moving even when nobody has the page open.
+create or replace function public.process_draft_clocks() returns void
+language plpgsql security definer set search_path = public as $$
+declare lg leagues;
+begin
+  for lg in select * from leagues
+            where status = 'drafting' and pick_seconds is not null
+              and clock_started_at + make_interval(secs => pick_seconds) <= now() loop
+    perform _pick(lg.id, _auto_choice(lg.id, team_on_clock(lg.id)), true);
+  end loop;
+end $$;
+
+-- "Autodraft for me": the computer picks the moment this team is on the clock.
+create or replace function public.set_autodraft(p_team uuid, p_on boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare lg uuid;
+begin
+  if not can_manage(p_team) then raise exception 'Not your team'; end if;
+  update teams set autodraft = p_on where id = p_team returning league_id into lg;
+  if p_on and (select status from leagues where id = lg) = 'drafting' and team_on_clock(lg) = p_team then
+    perform _pick(lg, _auto_choice(lg, p_team), true);
+  end if;
+end $$;
+
+-- Replace a team's draft queue with this ranked list of kicker ids.
+create or replace function public.set_queue(p_team uuid, p_kickers text[]) returns void
+language plpgsql security definer set search_path = public as $$
+declare lg uuid;
+begin
+  if not can_manage(p_team) then raise exception 'Not your team'; end if;
+  select league_id into lg from teams where id = p_team;
+  delete from draft_queue where team_id = p_team;
+  insert into draft_queue (league_id, team_id, kicker_id, pos)
+  select lg, p_team, k, min(n) from unnest(p_kickers) with ordinality as u(k, n) where k is not null group by k;
 end $$;
 
 -------------------------------------------------------------------------------
@@ -912,6 +987,9 @@ drop policy if exists "members read" on public.draft_picks;
 create policy "members read" on public.draft_picks for select using (is_member(league_id));
 drop policy if exists "members read" on public.transactions;
 create policy "members read" on public.transactions for select using (is_member(league_id));
+alter table public.draft_queue enable row level security;
+drop policy if exists "own queue" on public.draft_queue;
+create policy "own queue" on public.draft_queue for select using (can_manage(team_id));
 drop policy if exists "own claims" on public.waiver_claims;
 create policy "own claims" on public.waiver_claims for select using (can_manage(team_id) or is_commish(league_id));
 
@@ -921,10 +999,13 @@ revoke execute on function public.process_all_waivers()   from public, anon, aut
 revoke execute on function public.process_waivers(uuid)   from public, anon, authenticated;
 revoke execute on function public._drop(public.leagues, uuid, text, int) from public, anon, authenticated;
 revoke execute on function public._pick(uuid, text, boolean) from public, anon, authenticated;
+revoke execute on function public._auto_choice(uuid, uuid) from public, anon, authenticated;
+revoke execute on function public.process_draft_clocks()   from public, anon, authenticated;
 revoke execute on function public.handle_new_user()       from public, anon, authenticated;
 
 -------------------------------------------------------------------------------
 -- Scheduled jobs
 -------------------------------------------------------------------------------
 select cron.schedule('roll-lineups',    '5 * * * *',  $$select public.roll_lineups()$$);
+select cron.schedule('draft-clocks',    '* * * * *',  $$select public.process_draft_clocks()$$);
 select cron.schedule('process-waivers', '0 10 * * 3', $$select public.process_all_waivers()$$);

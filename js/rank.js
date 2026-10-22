@@ -1,4 +1,4 @@
-// Kicker Score: one number that sums how far a kicker is above or below average in every roto category.
+// Leg Index: one number that sums how far a kicker is above or below average in every roto category.
 //
 // For each category we take a per-game value (so missed games don't count against anyone):
 //   FG, 50+, XP, Clutch    made per game
@@ -100,6 +100,6 @@ function assignRanks(map) {
 
 export const formatScore = (s) => (s == null ? '–' : `${s >= 0 ? '+' : '−'}${Math.abs(s).toFixed(1)}`);
 
-export const SCORE_HELP = 'Kicker Score adds up how far a kicker is above or below average in each roto category, per game. '
+export const SCORE_HELP = 'Leg Index adds up how far a kicker is above or below average in each roto category, per game. '
   + 'FG% and XP% count makes above what an average kicker would make on the same attempts, so volume matters. '
   + '0 is average; about +5 is elite. Kickers with few games are pulled toward average.';

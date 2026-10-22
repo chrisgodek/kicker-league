@@ -46,7 +46,7 @@ async function render() {
 
   const th = (key, label, title = '') =>
     `<th data-sort="${key}" title="${title}" class="${state.sort === key ? 'sorted' : ''}">${label}${state.sort === key ? (state.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
-  $('table').tHead.innerHTML = `<tr>${th('name', 'Kicker')}<th>Team</th>${th('score', 'Score', SCORE_HELP)}${cats.map((c) => th(c.key, c.label, c.title)).join('')}${th('long', 'Long')}${th('fga', 'FGA')}<th>${seasonOver ? '' : `Wk ${week} game`}</th></tr>`;
+  $('table').tHead.innerHTML = `<tr>${th('name', 'Kicker')}<th>Team</th>${th('score', 'Leg Index', SCORE_HELP)}${cats.map((c) => th(c.key, c.label, c.title)).join('')}${th('long', 'Long')}${th('fga', 'FGA')}<th>${seasonOver ? '' : `Wk ${week} game`}</th></tr>`;
 
   $('table').tBodies[0].innerHTML = rows.map((r) => {
     const opp = r.next ? (r.next.home === r.team ? `vs ${r.next.away}` : `@ ${r.next.home}`) : (seasonOver ? '' : 'BYE');

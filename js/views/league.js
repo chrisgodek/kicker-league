@@ -33,7 +33,7 @@ export async function renderLeague(app, user, id, tab) {
     <nav class="tabs" role="tablist">
       ${TABS.map(([k, label]) => `<a class="tab ${k === tab ? 'active' : ''}" href="#/league/${id}/${k}">${label}</a>`).join('')}
     </nav>
-    ${L.manageable.length > 1 && ['team', 'players', 'waivers'].includes(tab) ? `
+    ${L.manageable.length > 1 && ['team', 'players', 'waivers', 'draft'].includes(tab) ? `
       <label class="acting">Managing
         <select id="acting">${L.manageable.map((t) => `<option value="${t.id}" ${t === acting ? 'selected' : ''}>${esc(t.name)}${t.owner ? '' : ' (placeholder)'}</option>`).join('')}</select>
       </label>` : ''}

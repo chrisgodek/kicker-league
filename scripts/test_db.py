@@ -111,29 +111,60 @@ def run(db):
     check("7th team rejected", db.fails("select add_placeholder_team(%s, 'Bot 5')", lg) is not None)
 
     print("Draft")
+    # Before the draft, bob queues two kickers and turns on autodraft.
+    db.as_user(users["bob"])
+    # Low-ranked kickers, so no other team's auto-pick grabs them first.
+    pool = [r[0] for r in db.q("select nk.id from nfl_kickers nk left join kicker_scores_blend(%s) s on s.kicker_id = nk.id "
+                               "where nk.season = %s and nk.status = 'active' order by coalesce(s.score, -99) limit 2",
+                               season, season)]
+    db.q("select set_queue(%s, %s)", bob_team, pool)
+    check("bob's queue saved in order", [r[0] for r in db.q(
+        "select kicker_id from draft_queue where team_id = %s order by pos", bob_team)] == pool)
+    db.q("select set_autodraft(%s, true)", bob_team)
+    db.as_user(users["outsider"])
+    check("others can't see bob's queue", db.one("select count(*) from draft_queue where team_id = %s", bob_team) == 0)
+
+    db.as_user(users["chris"])
     db.q("select start_draft(%s)", lg)
     check("draft running", db.one("select status from leagues where id = %s", lg) == "drafting")
     slots = dict(db.q("select id, draft_slot from teams where league_id = %s", lg))
     check("random draft order assigned", sorted(slots.values()) == [1, 2, 3, 4, 5, 6])
 
-    order = []
-    for pick in range(18):
+    def on_clock():
         db.as_user(None)
-        on_clock = db.one("select team_on_clock(%s)", lg)
-        order.append(slots[on_clock])
-        owner = db.one("select owner from teams where id = %s", on_clock)
-        if owner == users["bob"]:
-            db.as_user(users["bob"])
-        else:
-            if pick == 0:
-                db.as_user(users["bob"])
-                check("bob can't pick out of turn", "not your pick" in (db.fails(
-                    "select make_pick(%s, (select id from nfl_kickers where season = %s and status = 'active' limit 1))",
-                    lg, season) or ""))
-                check("bob can't auto-pick before the clock runs out",
-                      db.fails("select auto_pick(%s)", lg) is not None)
-            db.as_user(users["chris"])
+        return db.one("select team_on_clock(%s)", lg)
+
+    # Expired clock: the every-minute job makes the pick even with nobody online.
+    if on_clock() != bob_team:
+        before = db.one("select count(*) from draft_picks where league_id = %s", lg)
+        db.q("update leagues set clock_started_at = now() - interval '2 minutes' where id = %s", lg)
+        db.q("select process_draft_clocks()")
+        check("expired clock auto-picks from the server job",
+              db.one("select count(*) from draft_picks where league_id = %s", lg) > before)
+
+    # No time limit: a clock that started long ago still can't be auto-picked by another manager.
+    db.as_user(users["chris"])
+    db.q("select update_league_settings(%s, 'Test League', 1, false, 20, null)", lg)
+    db.as_user(None)
+    db.q("update leagues set clock_started_at = now() - interval '3 days' where id = %s", lg)
+    db.q("select process_draft_clocks()")
+    if on_clock() != bob_team:
+        db.as_user(users["bob"])
+        check("no time limit: nobody else can force a pick", db.fails("select auto_pick(%s)", lg) is not None)
+        check("bob can't pick out of turn", "not your pick" in (db.fails(
+            "select make_pick(%s, (select id from nfl_kickers where season = %s and status = 'active' limit 1))",
+            lg, season) or ""))
+
+    db.as_user(users["chris"])
+    while db.one("select status from leagues where id = %s", lg) == "drafting":
+        db.as_user(users["chris"])
         db.q("select auto_pick(%s)", lg)
+    order = [slots[r[0]] for r in db.q("select team_id from draft_picks where league_id = %s order by pick_no", lg)]
+    bob_picks = [r[0] for r in db.q("select kicker_id from draft_picks where team_id = %s order by pick_no", bob_team)]
+    check("autodraft took bob's queue first, in order", bob_picks[:2] == pool, str(bob_picks))
+    check("bob's picks were automatic", db.one("select bool_and(auto) from draft_picks where team_id = %s", bob_team))
+    db.as_user(users["bob"])
+    db.q("select set_autodraft(%s, false)", bob_team)
     check("snake order 1-6, 6-1, 1-6", order == [1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 6], str(order))
     check("league active after 18 picks", db.one("select status from leagues where id = %s", lg) == "active")
     check("every team has 3 kickers", db.q(
