@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "kicker-league", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8772"], "port": 8772 }
+  ]
+}

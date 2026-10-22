@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kicker Stats</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Kicker Stats</h1>
+    <p class="sub" id="updated"></p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label>Season
+        <select id="season">
+          <option value="2026">2026</option>
+          <option value="2025">2025</option>
+        </select>
+      </label>
+      <label>Weeks
+        <span class="range">
+          <select id="from"></select> to <select id="to"></select>
+        </span>
+      </label>
+      <label>Show
+        <select id="show">
+          <option value="rostered">NFL roster kickers</option>
+          <option value="all">Everyone who kicked</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="clutch"> Clutch FGs</label>
+    </section>
+
+    <div class="table-wrap">
+      <table id="table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note">Rates are pooled across the selected weeks. Next game shows when that kicker's lineup slot locks.</p>
+  </main>
+
+  <script type="module" src="js/stats.js"></script>
+</body>
+</html>
