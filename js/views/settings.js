@@ -148,7 +148,10 @@ export async function renderSettings({ L, reload, root }) {
     }
   }));
   $('#placeholder')?.addEventListener('click', (e) => busy(e.target, async () => {
-    await rpc('add_placeholder_team', { p_league: L.id, p_name: `Team ${L.teams.length + 1}` });
+    const names = new Set(L.teams.map((t) => t.name));
+    let n = 2;
+    while (names.has(`Team ${n}`)) n++;
+    await rpc('add_placeholder_team', { p_league: L.id, p_name: `Team ${n}` });
     reload();
   }));
   $('#randomize')?.addEventListener('click', (e) => busy(e.target, async () => {
