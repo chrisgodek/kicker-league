@@ -16,11 +16,14 @@ export async function loadLeague(id, user) {
     rows(sb.from('kicker_weeks').select('*').eq('season', league.season)),
     rows(sb.from('waivers').select('*').eq('league_id', id)),
   ]);
-  const lineups = await rows(sb.from('lineups').select('*').eq('league_id', id).eq('week', week));
+  const [lineups, live] = await Promise.all([
+    rows(sb.from('lineups').select('*').eq('league_id', id).eq('week', week)),
+    rows(sb.from('live_games').select('*').eq('season', league.season).eq('week', week)),
+  ]);
   const ownerIds = teams.map((t) => t.owner).filter(Boolean);
   const profiles = ownerIds.length ? await rows(sb.from('profiles').select('*').in('id', ownerIds)) : [];
 
-  return new League({ league, teams, roster, week, kickers, games, weeks, waivers, lineups, profiles, user });
+  return new League({ league, teams, roster, week, kickers, games, weeks, waivers, lineups, profiles, live, user });
 }
 
 export class League {
@@ -33,6 +36,8 @@ export class League {
     this.teamById = new Map(d.teams.map((t) => [t.id, t]));
     this.ownerName = new Map(d.profiles.map((p) => [p.id, p.display_name]));
     this.rosterTeam = new Map(d.roster.map((r) => [r.kicker_id, r.team_id]));
+    this.liveByGame = new Map(d.live.map((g) => [g.game_id, g]));
+    this.thisWeek = new Map(d.weeks.filter((w) => w.week === d.week).map((w) => [w.kicker_id, w]));
     this.waiverUntil = new Map(d.waivers.filter((w) => new Date(w.clears_at) > new Date()).map((w) => [w.kicker_id, w.clears_at]));
 
     // Season-to-date totals per kicker.
@@ -80,13 +85,38 @@ export class League {
     return !!g && new Date(g.kickoff) <= new Date();
   }
 
-  // "vs DAL · Sun 1:25 PM", "@ KC · Locked", or "BYE"
+  // "vs DAL · Sun 1:25 PM", "@ KC · Locked", or "BYE". While a game is on, includes the score and clock.
   matchup(kickerId) {
     const k = this.kicker(kickerId);
     const g = this.game(kickerId);
     if (!g) return { text: 'BYE', locked: false };
     const opp = g.home === k.team ? `vs ${g.away}` : `@ ${g.home}`;
-    return { text: opp, kickoff: g.kickoff, locked: new Date(g.kickoff) <= new Date() };
+    const lg = this.liveByGame.get(g.id);
+    const score = lg && lg.home_score != null
+      ? (g.home === k.team ? `${lg.home_score}–${lg.away_score}` : `${lg.away_score}–${lg.home_score}`) : '';
+    return {
+      text: opp, kickoff: g.kickoff, locked: new Date(g.kickoff) <= new Date(),
+      live: lg?.state === 'in', final: lg?.state === 'post', score, detail: lg?.detail || '',
+    };
+  }
+
+  // This week's kicking so far ("FG 2/3 · Long 55 · XP 1/1"), or '' if he hasn't kicked.
+  weekLine(kickerId) {
+    const w = this.thisWeek.get(kickerId);
+    if (!w || !(w.fga || w.xpa)) return '';
+    return `FG ${w.fgm}/${w.fga}${w.fgm ? ` · Long ${w.long}` : ''} · XP ${w.xpm}/${w.xpa}`;
+  }
+
+  // Any game this week in progress (or kicked off and not yet reported final).
+  get isLive() {
+    const now = Date.now();
+    return this.games.some((g) => {
+      if (g.week !== this.week) return false;
+      const lg = this.liveByGame.get(g.id);
+      if (lg) return lg.state === 'in';
+      const k = new Date(g.kickoff).getTime();
+      return k <= now && now <= k + 4.5 * 3600e3;
+    });
   }
 
   availability(kickerId) {

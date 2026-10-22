@@ -2,11 +2,12 @@
 import { sb, currentUser } from './supa.js';
 import { $, esc } from './ui.js';
 import { renderHome, renderSignIn, renderJoin } from './views/home.js';
-import { renderLeague } from './views/league.js';
+import { renderLeague, stopLeagueTimers } from './views/league.js';
 
 const app = $('#app');
 
 async function route() {
+  stopLeagueTimers();
   const user = await currentUser();
   renderNav(user);
   const [, page, a, b] = location.hash.replace(/^#/, '').split('/');

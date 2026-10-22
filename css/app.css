@@ -229,3 +229,13 @@ td.score.neg { color: var(--muted); }
 .actions-cell button + button { margin-left: 6px; }
 label.switch { font-size: 0.9rem; }
 .draft-cols + .card, .table-wrap + .draft-cols { margin-top: 16px; }
+.live-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.02em;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+.live-text { color: var(--danger); font-weight: 700; }
+.week-line { color: var(--text); font-weight: 600; }
+.week-line.is-live::before { content: "● "; color: var(--danger); }
+@keyframes live-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .live-badge { animation: none; } }

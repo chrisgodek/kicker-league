@@ -4,7 +4,7 @@ import { $, $$, esc, busy, toast, choose, confirmBox, fmtKickoff, fmtDate } from
 import { loadLeague } from '../league.js';
 import { categoriesFor, formatStat } from '../data.js';
 import { renderDraft } from './draft.js';
-import { statPicker, sortKickers, statHeaders, statCells } from '../statview.js';
+import { statPicker, sortKickers, statHeaders, statCells, clearStatsCache } from '../statview.js';
 import { renderSettings } from './settings.js';
 
 const TABS = [
@@ -13,6 +13,12 @@ const TABS = [
 ];
 
 let stopTimers = () => {};
+
+// Stop any draft clock or live-refresh timer from the page being left.
+export function stopLeagueTimers() {
+  stopTimers();
+  stopTimers = () => {};
+}
 
 export async function renderLeague(app, user, id, tab) {
   stopTimers();
@@ -28,7 +34,7 @@ export async function renderLeague(app, user, id, tab) {
   app.innerHTML = `
     <div class="page-head">
       <h1>${esc(L.league.name)}</h1>
-      <p class="muted">${L.league.size} teams · ${L.league.season} season · ${L.league.status === 'active' ? `Week ${L.week}` : statusText(L.league.status)}${startsLater(L) ? ` · <b>Scoring starts week ${L.league.start_week}</b>` : ''}</p>
+      <p class="muted">${L.league.size} teams · ${L.league.season} season · ${L.league.status === 'active' ? `Week ${L.week}` : statusText(L.league.status)}${startsLater(L) ? ` · <b>Scoring starts week ${L.league.start_week}</b>` : ''}${L.isLive ? ' <span class="live-badge" title="Games in progress. Stats update about every minute.">● Live</span>' : ''}</p>
     </div>
     <nav class="tabs" role="tablist">
       ${TABS.map(([k, label]) => `<a class="tab ${k === tab ? 'active' : ''}" href="#/league/${id}/${k}">${label}</a>`).join('')}
@@ -43,6 +49,16 @@ export async function renderLeague(app, user, id, tab) {
 
   const root = $('#tab');
   const ctx = { L, acting, reload, root, setTimers: (stop) => { stopTimers = stop; } };
+
+  // During games, refresh every minute (skipped while a dialog is open or the tab is hidden).
+  if (L.isLive && ['team', 'standings', 'players'].includes(tab)) {
+    const timer = setInterval(() => {
+      if (document.hidden || document.querySelector('dialog[open]')) return;
+      clearStatsCache(L.league.season);
+      reload();
+    }, 60000);
+    stopTimers = () => clearInterval(timer);
+  }
   const views = { team: renderTeam, standings: renderStandings, players: renderPlayers, waivers: renderWaivers,
     draft: renderDraft, activity: renderActivity, settings: renderSettings };
   await (views[tab] || renderTeam)(ctx);
@@ -59,6 +75,13 @@ function statusText(s) {
 }
 
 // ---------------------------------------------------------------------------- My Team
+function gameState(m) {
+  if (!m.kickoff) return '';
+  if (m.live) return ` · <span class="live-text">${esc(m.score)} ${esc(m.detail)}</span>`;
+  if (m.final) return ` · ${esc(m.score)} Final`;
+  return m.locked ? ' · <span class="lock">Locked</span>' : ` · ${fmtKickoff(m.kickoff)}`;
+}
+
 function kickerRow(L, kid, actions) {
   const k = L.kicker(kid);
   const s = L.stats(kid);
@@ -67,9 +90,12 @@ function kickerRow(L, kid, actions) {
   return `<div class="kicker-row ${m.locked ? 'locked' : ''}">
     <div class="who">
       <b>${esc(k.name)}</b> ${status}
-      <div class="muted">${esc(k.team)} · ${m.text}${m.kickoff ? ` · ${m.locked ? '<span class="lock">Locked</span>' : fmtKickoff(m.kickoff)}` : ''}</div>
+      <div class="muted">${esc(k.team)} · ${m.text}${gameState(m)}</div>
     </div>
-    <div class="line muted">FG ${s.fgm}/${s.fga} · 50+ ${s.fg50} · XP ${s.xpm}/${s.xpa}</div>
+    <div class="line muted">
+      ${L.weekLine(kid) ? `<div class="week-line ${m.live ? 'is-live' : ''}">Wk ${L.week}: ${L.weekLine(kid)}</div>` : ''}
+      <div>Season: FG ${s.fgm}/${s.fga} · 50+ ${s.fg50} · XP ${s.xpm}/${s.xpa}</div>
+    </div>
     <div class="actions">${actions}</div>
   </div>`;
 }
@@ -178,6 +204,7 @@ async function renderStandings({ L, root }) {
         }).join('')}</tbody>
       </table>
     </div>
+    ${L.isLive ? '<p class="note"><span class="live-text">● Live:</span> includes stats from games in progress, updated about every minute. Official stats replace them overnight.</p>' : ''}
     <p class="note">Each category: best team gets ${L.league.size} points, worst gets 1, ties split. Small numbers are standings points.
     Rate stats (FG%, XP%, Avg Dist) need ${min || '1.5 per week'} attempts${weeks ? ` (1.5 × ${weeks} weeks)` : ''}, or the team ranks last in them.</p>`;
 }
@@ -222,7 +249,7 @@ async function renderPlayers({ L, acting, reload, root }) {
               <td class="name">${esc(k.name)} ${k.status !== 'active' ? `<span class="tag">${esc(k.status)}</span>` : ''}<div class="muted small">${esc(k.team)}</div></td>
               <td class="small">${where}</td>
               ${statCells(k.id, picker, cats)}
-              <td class="small">${m.text}${m.kickoff ? `<div class="muted">${m.locked ? 'Locked' : fmtKickoff(m.kickoff)}</div>` : ''}</td>
+              <td class="small">${m.text}${m.kickoff ? `<div class="muted">${m.live ? `<span class="live-text">${esc(m.score)} ${esc(m.detail)}</span>` : m.final ? `${esc(m.score)} Final` : m.locked ? 'Locked' : fmtKickoff(m.kickoff)}</div>` : ''}</td>
               <td>${action}</td>
             </tr>`;
           }).join('')}</tbody>

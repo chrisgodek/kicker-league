@@ -1,0 +1,28 @@
+name: Live stats during games
+
+on:
+  schedule:
+    # Every 20 minutes, September through February. Runs exit within seconds when no game is
+    # live or about to start; otherwise they stay up and poll ESPN every minute until games end.
+    - cron: "*/20 * * 9-12,1-2 *"
+  workflow_dispatch:
+
+# One live updater at a time; a run that starts while another is active waits its turn.
+concurrency:
+  group: live-stats
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q "psycopg[binary]"
+      - name: Poll live games
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 -u scripts/live.py

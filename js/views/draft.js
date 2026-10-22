@@ -186,6 +186,7 @@ export async function renderDraft(ctx) {
       rows(sb.from('draft_picks').select('*').eq('league_id', L.id).order('pick_no')),
       rows(sb.from('leagues').select('*').eq('id', L.id)),
     ]);
+    if (!lg[0]) return;   // league deleted or no longer visible
     const changed = force || p.length !== picks.length || lg[0].status !== league.status;
     picks = p;
     const wasRunning = league.status !== 'active';

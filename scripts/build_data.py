@@ -74,6 +74,7 @@ def build_schedule(season):
             "home": row["home_team"],
             "awayScore": num(row["away_score"], None),
             "homeScore": num(row["home_score"], None),
+            "espnId": row["espn"] or None,
         })
     games.sort(key=lambda g: (g["kickoff"], g["id"]))
     return games
@@ -117,7 +118,7 @@ def build_stats(kicks):
     for k in kicks:
         week = stats.setdefault(k["k"], {}).setdefault(str(k["w"]), {
             "fga": 0, "fgm": 0, "fg50": 0, "fgDist": 0,
-            "xpa": 0, "xpm": 0, "clutch": 0, "long": 0, "team": k["t"],
+            "xpa": 0, "xpm": 0, "clutch": 0, "long": 0, "team": k["t"], "game": k["g"],
         })
         if k["type"] == "FG":
             week["fga"] += 1
@@ -151,13 +152,14 @@ def build_kickers(season, kick_names):
             "status": STATUS.get(row["status"], "free agent"),
             "headshot": row["headshot_url"] or None,
             "sleeperId": row["sleeper_id"] or None,
+            "espnId": row["espn_id"] or None,
             "_week": row["week"],
         }
     # Anyone who kicked but isn't listed as a K (e.g. a punter filling in) still gets stats.
     for kid, (short, team) in kick_names.items():
         if kid not in kickers:
             kickers[kid] = {"id": kid, "name": short, "team": team, "status": "non-kicker",
-                            "headshot": None, "sleeperId": None, "_week": "0"}
+                            "headshot": None, "sleeperId": None, "espnId": None, "_week": "0"}
     out = []
     for k in kickers.values():
         k.pop("_week")
@@ -199,24 +201,35 @@ def build(season):
 
 
 def push(season, kickers, schedule, stats):
-    """Replace this season's NFL data in the database in one transaction."""
+    """Load this season's NFL data into the database in one transaction.
+
+    Official stats replace any live stats for the same games; live rows for games the official data
+    doesn't cover yet (it can lag a day) are left alone.
+    """
     from db import connect
+    rows = [(season, int(w), kid, s["team"], s["fga"], s["fgm"], s["fg50"], s["fgDist"],
+             s["xpa"], s["xpm"], s["clutch"], s["long"], s["game"])
+            for kid, weeks in stats.items() for w, s in weeks.items()]
+    official_games = sorted({r[-1] for r in rows})
     with connect() as conn, conn.cursor() as cur:
         cur.execute("delete from nfl_kickers where season = %s", (season,))
         cur.executemany(
-            "insert into nfl_kickers (season, id, name, team, status, headshot) values (%s,%s,%s,%s,%s,%s)",
-            [(season, k["id"], k["name"], k["team"], k["status"], k["headshot"]) for k in kickers])
+            "insert into nfl_kickers (season, id, name, team, status, headshot, espn_id) values (%s,%s,%s,%s,%s,%s,%s)",
+            [(season, k["id"], k["name"], k["team"], k["status"], k["headshot"], k["espnId"]) for k in kickers])
         cur.execute("delete from nfl_games where season = %s", (season,))
         cur.executemany(
-            "insert into nfl_games (id, season, week, kickoff, home, away) values (%s,%s,%s,%s,%s,%s)",
-            [(g["id"], season, g["week"], g["kickoff"], g["home"], g["away"]) for g in schedule])
-        cur.execute("delete from kicker_weeks where season = %s", (season,))
+            "insert into nfl_games (id, season, week, kickoff, home, away, espn_id) values (%s,%s,%s,%s,%s,%s,%s)",
+            [(g["id"], season, g["week"], g["kickoff"], g["home"], g["away"], g["espnId"]) for g in schedule])
+        cur.execute("delete from kicker_weeks where season = %s and (source = 'official' or game_id = any(%s))",
+                    (season, official_games))
         cur.executemany(
-            "insert into kicker_weeks (season, week, kicker_id, team, fga, fgm, fg50, fg_dist, xpa, xpm, clutch, long)"
-            " values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            [(season, int(w), kid, s["team"], s["fga"], s["fgm"], s["fg50"], s["fgDist"],
-              s["xpa"], s["xpm"], s["clutch"], s["long"])
-             for kid, weeks in stats.items() for w, s in weeks.items()])
+            "insert into kicker_weeks (season, week, kicker_id, team, fga, fgm, fg50, fg_dist, xpa, xpm, clutch, long,"
+            " source, game_id) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'official',%s)"
+            " on conflict (season, week, kicker_id) do update set team = excluded.team, fga = excluded.fga,"
+            " fgm = excluded.fgm, fg50 = excluded.fg50, fg_dist = excluded.fg_dist, xpa = excluded.xpa,"
+            " xpm = excluded.xpm, clutch = excluded.clutch, long = excluded.long, source = 'official',"
+            " game_id = excluded.game_id",
+            rows)
     print(f"  pushed {season}: {len(kickers)} kickers, {len(schedule)} games to the database")
 
 

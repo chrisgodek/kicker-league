@@ -77,6 +77,22 @@ create table if not exists public.teams (
   unique (league_id, draft_slot)
 );
 -- Changes for tables that already existed.
+alter table public.nfl_kickers  add column if not exists espn_id text;
+alter table public.nfl_games    add column if not exists espn_id text;
+alter table public.kicker_weeks add column if not exists source  text not null default 'official';  -- or 'live'
+alter table public.kicker_weeks add column if not exists game_id text;
+
+-- Status of games the live updater has seen (for the app's Live badge and scores).
+create table if not exists public.live_games (
+  game_id    text primary key,
+  season     int  not null,
+  week       int  not null,
+  state      text not null,          -- pre / in / post
+  detail     text,                   -- e.g. "Q3 8:34", "Final/OT"
+  home_score int,
+  away_score int,
+  updated_at timestamptz not null default now()
+);
 alter table public.leagues alter column pick_seconds drop not null;
 alter table public.leagues drop constraint if exists leagues_pick_seconds_check;
 alter table public.leagues add constraint leagues_pick_seconds_check
@@ -974,6 +990,9 @@ drop policy if exists "public read" on public.nfl_kickers;
 create policy "public read" on public.nfl_kickers  for select using (true);
 drop policy if exists "public read" on public.nfl_games;
 create policy "public read" on public.nfl_games    for select using (true);
+alter table public.live_games enable row level security;
+drop policy if exists "public read" on public.live_games;
+create policy "public read" on public.live_games for select using (true);
 drop policy if exists "public read" on public.kicker_weeks;
 create policy "public read" on public.kicker_weeks for select using (true);
 

@@ -7,6 +7,11 @@ import { esc } from './ui.js';
 
 const cache = new Map();
 
+// Forget a season's cached totals (used when live stats refresh during games).
+export function clearStatsCache(season) {
+  cache.delete(season);
+}
+
 function seasonTotals(season) {
   if (!cache.has(season)) {
     cache.set(season, rows(sb.from('kicker_weeks').select('*').eq('season', season)).then((list) => {
