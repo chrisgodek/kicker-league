@@ -11,7 +11,12 @@ export async function renderSettings({ L, reload, root }) {
   const setup = lg.status === 'setup';
   const invite = `${location.origin}${location.pathname}#/join/${lg.invite_code}`;
   const ordered = [...L.teams].sort((a, b) => (a.draft_slot ?? 99) - (b.draft_slot ?? 99));
-  const weeks = Array.from({ length: 18 }, (_, i) => i + 1);
+  // Each week's first kickoff, and the first week that hasn't started yet.
+  const firstKick = {};
+  for (const g of L.games) if (!firstKick[g.week] || g.kickoff < firstKick[g.week]) firstKick[g.week] = g.kickoff;
+  const weeks = Object.keys(firstKick).map(Number).sort((a, b) => a - b);
+  const openFrom = weeks.find((w) => new Date(firstKick[w]) > new Date()) ?? 19;
+  const weekDate = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
   root.innerHTML = `
     <div class="grid-2">
@@ -64,8 +69,8 @@ export async function renderSettings({ L, reload, root }) {
         <h2>Settings</h2>
         <label>League name <input name="name" value="${esc(lg.name)}" maxlength="60" required></label>
         <div class="row">
-          <label>Stats count from week
-            <select name="start" ${setup ? '' : 'disabled'}>${weeks.map((w) => `<option ${w === lg.start_week ? 'selected' : ''}>${w}</option>`).join('')}</select>
+          <label>First scoring week
+            <select name="start" ${setup ? '' : 'disabled'}>${weeks.map((w) => `<option value="${w}" ${w === lg.start_week ? 'selected' : ''} ${w < openFrom && w !== lg.start_week ? 'disabled' : ''}>Week ${w} (${weekDate.format(new Date(firstKick[w]))})${w < openFrom ? ' – started' : ''}</option>`).join('')}</select>
           </label>
           <label>Adds per team
             <input name="adds" type="number" min="0" max="100" value="${lg.add_limit}">
@@ -78,7 +83,9 @@ export async function renderSettings({ L, reload, root }) {
           </label>
         </div>
         <label class="check"><input type="checkbox" name="clutch" ${lg.clutch ? 'checked' : ''} ${setup ? '' : 'disabled'}> Clutch FGs category (go-ahead or tying FGs in the last 2:00 or OT)</label>
-        ${setup ? '' : '<p class="note">Start week and categories are locked once the draft starts.</p>'}
+        <p class="note">${setup
+          ? 'Stats count from the first scoring week on. You can draft any time before it; lineups for that week open after the draft. If the week has already started when the draft ends, scoring starts the next week.'
+          : 'First scoring week and categories are locked once the draft starts.'}</p>
         <button class="primary" type="submit">Save settings</button>
       </form>
 

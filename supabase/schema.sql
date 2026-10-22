@@ -342,6 +342,9 @@ begin
   if lg.status <> 'setup' and (p_start_week <> lg.start_week or p_clutch <> lg.clutch) then
     raise exception 'Start week and categories are locked once the draft starts';
   end if;
+  if p_start_week <> lg.start_week and p_start_week < current_week(lg.season) then
+    raise exception 'Week % has already started. Pick week % or later', p_start_week, current_week(lg.season);
+  end if;
   update leagues set name = trim(p_name), start_week = p_start_week, clutch = p_clutch,
                      add_limit = p_add_limit, pick_seconds = p_pick_seconds
   where id = p_league;
@@ -482,8 +485,10 @@ begin
           || case when p_auto then ' (auto)' else '' end);
 
   if n >= lg.size * 3 then
-    -- Draft done: each team starts its first two picks.
-    update leagues set status = 'active', clock_started_at = null where id = p_league;
+    -- Draft done: scoring can't start in a week that's already underway; each team starts its first two picks.
+    update leagues set status = 'active', clock_started_at = null,
+                       start_week = greatest(start_week, current_week(season))
+    where id = p_league;
     wk := league_week(p_league);
     insert into lineups (league_id, team_id, week, slot, kicker_id)
     select p_league, team_id, wk, rn, kicker_id
@@ -829,9 +834,11 @@ returns table (
   pts_xp_pct numeric, pts_avg_dist numeric, pts_clutch numeric, total numeric)
 language sql stable security definer set search_path = public as $$
   with lg as (select * from leagues where id = p_league),
+  -- Weeks played: from the first week the league had lineups (never before its start week).
   weeks as (
     select count(distinct kw.week)::int as n from kicker_weeks kw, lg
     where kw.season = lg.season and kw.week >= lg.start_week
+      and kw.week >= coalesce((select min(week) from lineups where league_id = p_league), lg.start_week)
   ),
   tot as (
     select t.id as team_id, t.name as team_name, t.owner, t.draft_slot,

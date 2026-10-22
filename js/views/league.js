@@ -28,7 +28,7 @@ export async function renderLeague(app, user, id, tab) {
   app.innerHTML = `
     <div class="page-head">
       <h1>${esc(L.league.name)}</h1>
-      <p class="muted">${L.league.size} teams · ${L.league.season} season · ${L.league.status === 'active' ? `Week ${L.week}` : statusText(L.league.status)}</p>
+      <p class="muted">${L.league.size} teams · ${L.league.season} season · ${L.league.status === 'active' ? `Week ${L.week}` : statusText(L.league.status)}${startsLater(L) ? ` · <b>Scoring starts week ${L.league.start_week}</b>` : ''}</p>
     </div>
     <nav class="tabs" role="tablist">
       ${TABS.map(([k, label]) => `<a class="tab ${k === tab ? 'active' : ''}" href="#/league/${id}/${k}">${label}</a>`).join('')}
@@ -46,6 +46,12 @@ export async function renderLeague(app, user, id, tab) {
   const views = { team: renderTeam, standings: renderStandings, players: renderPlayers, waivers: renderWaivers,
     draft: renderDraft, activity: renderActivity, settings: renderSettings };
   await (views[tab] || renderTeam)(ctx);
+}
+
+// True when the league's first scoring week hasn't kicked off yet.
+function startsLater(L) {
+  const first = L.games.filter((g) => g.week === L.league.start_week).map((g) => g.kickoff).sort()[0];
+  return !!first && new Date(first) > new Date();
 }
 
 function statusText(s) {

@@ -110,6 +110,17 @@ def run(db):
     check("league full at 6", db.one("select count(*) from teams where league_id = %s", lg) == 6)
     check("7th team rejected", db.fails("select add_placeholder_team(%s, 'Bot 5')", lg) is not None)
 
+    print("Start week")
+    db.as_user(users["chris"])
+    cw = db.one("select current_week(%s)", season)
+    if cw > 1:
+        check("can't pick a start week that already started",
+              "already started" in (db.fails("select update_league_settings(%s, 'Test League', %s, false, 20, 90)", lg, cw - 1) or ""))
+    future = min(cw + 2, 18)
+    db.q("select update_league_settings(%s, 'Test League', %s, false, 20, 90)", lg, future)
+    check("future start week saved", db.one("select start_week from leagues where id = %s", lg) == future)
+    db.q("select update_league_settings(%s, 'Test League', %s, false, 20, 90)", lg, cw)
+
     print("Draft")
     # Before the draft, bob queues two kickers and turns on autodraft.
     db.as_user(users["bob"])
@@ -144,7 +155,7 @@ def run(db):
 
     # No time limit: a clock that started long ago still can't be auto-picked by another manager.
     db.as_user(users["chris"])
-    db.q("select update_league_settings(%s, 'Test League', 1, false, 20, null)", lg)
+    db.q("select update_league_settings(%s, 'Test League', %s, false, 20, null)", lg, cw)
     db.as_user(None)
     db.q("update leagues set clock_started_at = now() - interval '3 days' where id = %s", lg)
     db.q("select process_draft_clocks()")
