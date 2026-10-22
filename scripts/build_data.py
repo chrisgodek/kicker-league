@@ -6,6 +6,8 @@ Pulls nflverse play-by-play, schedule, and roster data for a season and writes:
   data/<season>/schedule.json  every regular-season game with kickoff in UTC
   data/<season>/stats.json     per-kicker, per-week raw kicking totals
   data/<season>/kicks.json     every FG / XP attempt (for detail views + auditing)
+  data/<season>/highlights.json  rare kicker moments for league badges: recovered onside kicks,
+                                 and fake-FG passes/runs by a kicker that got a first down or TD
 
 Standard library only so it runs anywhere (locally or in GitHub Actions).
 Usage: python3 scripts/build_data.py [--push] 2026 [2025 ...]
@@ -80,12 +82,40 @@ def build_schedule(season):
     return games
 
 
+def highlight_candidate(row):
+    """Onside kicks the kicking team recovered, and successful passes/runs (possibly by a kicker)."""
+    desc = row["desc"]
+    if "no play" in desc.lower():
+        return None
+    base = {"id": f'{row["game_id"]}_{row["play_id"]}', "week": num(row["week"]), "game": row["game_id"],
+            "team": row["posteam"], "desc": desc}
+    if row["kickoff_attempt"] == "1" and "onside" in desc.lower() and row["own_kickoff_recovery"] == "1":
+        # On kickoffs the "possession" team is the receiving team; the kicking team is the defense.
+        return {**base, "kicker": row["kicker_player_id"], "kind": "onside", "team": row["defteam"],
+                "detail": "Onside kick recovered by his team"}
+    good = row["first_down"] == "1" or row["touchdown"] == "1" or row["two_point_conv_result"] == "success"
+    if row["play_type"] in ("pass", "run") and good:
+        yards = num(row["yards_gained"])
+        what = "TD" if row["touchdown"] == "1" else "2-point conversion" if row["two_point_conv_result"] == "success" else "first down"
+        if row["play_type"] == "pass" and row["passer_player_id"]:
+            return {**base, "kicker": row["passer_player_id"], "kind": "fake_pass",
+                    "detail": f"Threw a {yards}-yard pass for a {what} on a fake"}
+        if row["play_type"] == "run" and row["rusher_player_id"]:
+            return {**base, "kicker": row["rusher_player_id"], "kind": "fake_run",
+                    "detail": f"Ran {yards} yards for a {what} on a fake"}
+    return None
+
+
 def build_kicks(season):
     kicks = []
     names = {}
+    candidates = []
     for row in fetch(PBP_URL.format(season=season)):
         if row["season_type"] != "REG":
             continue
+        c = highlight_candidate(row)
+        if c:
+            candidates.append(c)
         fg = row["field_goal_attempt"] == "1"
         xp = row["extra_point_attempt"] == "1"
         if not (fg or xp) or not row["kicker_player_id"]:
@@ -109,7 +139,7 @@ def build_kicks(season):
             "made": made,
             "clutch": fg and made and is_clutch(row),
         })
-    return kicks, names
+    return kicks, names, candidates
 
 
 def build_stats(kicks):
@@ -186,8 +216,11 @@ def write(path, obj):
 def build(season):
     print(f"Season {season}")
     schedule = build_schedule(season)
-    kicks, names = build_kicks(season)
+    kicks, names, candidates = build_kicks(season)
     kickers = build_kickers(season, names)
+    # Only players listed as kickers count (not a running back who once filled in).
+    real_kickers = {k["id"] for k in kickers if k["status"] != "non-kicker"}
+    highlights = [c for c in candidates if c["kicker"] in real_kickers]
     stats = build_stats(kicks)
     weeks_done = max((k["w"] for k in kicks), default=0)
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -197,10 +230,11 @@ def build(season):
     write(out / "stats.json", {"season": season, "updated": updated,
                                "weeksWithData": weeks_done, "stats": stats})
     write(out / "kicks.json", {"season": season, "updated": updated, "kicks": kicks})
-    return kickers, schedule, stats
+    write(out / "highlights.json", {"season": season, "updated": updated, "highlights": highlights})
+    return kickers, schedule, stats, highlights
 
 
-def push(season, kickers, schedule, stats):
+def push(season, kickers, schedule, stats, highlights):
     """Load this season's NFL data into the database in one transaction.
 
     Official stats replace any live stats for the same games; live rows for games the official data
@@ -230,6 +264,15 @@ def push(season, kickers, schedule, stats):
             " xpm = excluded.xpm, clutch = excluded.clutch, long = excluded.long, source = 'official',"
             " game_id = excluded.game_id",
             rows)
+        cur.execute("delete from nfl_highlights where season = %s", (season,))
+        cur.executemany(
+            "insert into nfl_highlights (id, season, week, game_id, kicker_id, team, kind, detail, description)"
+            " values (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            [(h["id"], season, h["week"], h["game"], h["kicker"], h["team"], h["kind"], h["detail"], h["desc"])
+             for h in highlights])
+        cur.execute("select award_badges()")
+        awarded = cur.fetchone()[0]
+    print(f"  {len(highlights)} highlights, {awarded} new league badges")
     print(f"  pushed {season}: {len(kickers)} kickers, {len(schedule)} games to the database")
 
 
@@ -240,6 +283,6 @@ if __name__ == "__main__":
     do_push = "--push" in args
     seasons = [int(a) for a in args if a != "--push"] or [current]
     for s in seasons:
-        kickers, schedule, games_stats = build(s)
+        kickers, schedule, games_stats, highlights = build(s)
         if do_push:
-            push(s, kickers, schedule, games_stats)
+            push(s, kickers, schedule, games_stats, highlights)

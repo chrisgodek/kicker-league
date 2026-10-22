@@ -16,14 +16,15 @@ export async function loadLeague(id, user) {
     rows(sb.from('kicker_weeks').select('*').eq('season', league.season)),
     rows(sb.from('waivers').select('*').eq('league_id', id)),
   ]);
-  const [lineups, live] = await Promise.all([
+  const [lineups, live, badges] = await Promise.all([
     rows(sb.from('lineups').select('*').eq('league_id', id).eq('week', week)),
     rows(sb.from('live_games').select('*').eq('season', league.season).eq('week', week)),
+    rows(sb.from('league_badges').select('*').eq('league_id', id).order('week')),
   ]);
   const ownerIds = teams.map((t) => t.owner).filter(Boolean);
   const profiles = ownerIds.length ? await rows(sb.from('profiles').select('*').in('id', ownerIds)) : [];
 
-  return new League({ league, teams, roster, week, kickers, games, weeks, waivers, lineups, profiles, live, user });
+  return new League({ league, teams, roster, week, kickers, games, weeks, waivers, lineups, profiles, live, badges, user });
 }
 
 export class League {
@@ -65,6 +66,10 @@ export class League {
 
   stats(id) {
     return this.totals.get(id) || withRates(emptyTotals());
+  }
+
+  badgesOf(teamId) {
+    return this.badges.filter((b) => b.team_id === teamId);
   }
 
   rosterOf(teamId) {

@@ -1,6 +1,6 @@
 // League page: header, tabs, and the My Team / Standings / Players / Waivers / Activity tabs.
 import { sb, rpc, rows } from '../supa.js';
-import { $, $$, esc, busy, toast, choose, confirmBox, fmtKickoff, fmtDate } from '../ui.js';
+import { $, $$, esc, busy, toast, choose, confirmBox, fmtKickoff, fmtDate, BADGE, badgeIcon } from '../ui.js';
 import { loadLeague } from '../league.js';
 import { categoriesFor, formatStat } from '../data.js';
 import { renderDraft } from './draft.js';
@@ -131,6 +131,13 @@ async function renderTeam({ L, acting, reload, root }) {
         : '<p class="muted">No one on the bench.</p>'}
       <p class="note">Lineups lock one kicker at a time, when that kicker's game kicks off. Kickers on a bye score nothing that week.</p>
     </div>
+    ${L.badgesOf(acting.id).length ? `<div class="card">
+      <h3>Badges</h3>
+      <ul class="plain badges">${L.badgesOf(acting.id).map((b) => `
+        <li><span class="badge big">${badgeIcon(b)}</span>
+          <b>${esc(L.kicker(b.kicker_id).name)}</b>: ${esc(b.detail)}
+          <span class="muted small">· ${esc((BADGE[b.kind] || {}).label || 'Badge')} · week ${b.week}${b.started ? '' : ' · from the bench'}</span></li>`).join('')}</ul>
+    </div>` : ''}
     <div class="card">
       <h3>Roster moves</h3>
       <div class="chips">${roster.map((kid) => `<button class="chip" data-drop="${kid}" ${L.locked(kid) && starters.includes(kid) ? 'disabled title="Locked"' : ''}>Drop ${esc(L.kicker(kid).name)}</button>`).join('')}</div>
@@ -191,7 +198,7 @@ async function renderStandings({ L, root }) {
           const t = L.teamById.get(r.team_id);
           return `<tr class="${t === L.myTeam ? 'mine' : ''}">
             <td>${i + 1}</td>
-            <td class="name">${esc(r.team_name)}<div class="muted small">${esc(L.teamLabel(t))}</div></td>
+            <td class="name">${esc(r.team_name)} ${L.badgesOf(r.team_id).map((b) => `<span class="badge" title="${esc(`${L.kicker(b.kicker_id).name}: ${b.detail} (week ${b.week})`)}">${badgeIcon(b)}</span>`).join('')}<div class="muted small">${esc(L.teamLabel(t))}</div></td>
             ${cats.map((c) => {
               const [valKey, ptsKey] = STAND_COLS[c.key];
               const raw = r[valKey];
@@ -205,6 +212,7 @@ async function renderStandings({ L, root }) {
       </table>
     </div>
     ${L.isLive ? '<p class="note"><span class="live-text">● Live:</span> includes stats from games in progress, updated about every minute. Official stats replace them overnight.</p>' : ''}
+    ${L.badges.length ? '<p class="note">🎯 Onside kick recovery · 🎩 Successful fake field goal by the kicker. Badges are bragging rights and don\'t affect the standings.</p>' : ''}
     <p class="note">Each category: best team gets ${L.league.size} points, worst gets 1, ties split. Small numbers are standings points.
     Rate stats (FG%, XP%, Avg Dist) need ${min || '1.5 per week'} attempts${weeks ? ` (1.5 × ${weeks} weeks)` : ''}, or the team ranks last in them.</p>`;
 }

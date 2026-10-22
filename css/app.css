@@ -239,3 +239,7 @@ label.switch { font-size: 0.9rem; }
 .week-line.is-live::before { content: "● "; color: var(--danger); }
 @keyframes live-pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .live-badge { animation: none; } }
+.badge { cursor: default; font-size: 0.95rem; }
+.badge.big { font-size: 1.3rem; margin-right: 4px; vertical-align: -2px; }
+.pill.badge { font-size: 0.72rem; background: var(--tag); color: var(--tag-text); }
+ul.badges li { padding: 9px 0; }

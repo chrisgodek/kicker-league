@@ -290,6 +290,30 @@ def run(db):
     db.as_user(users["outsider"])
     check("outsider gets no standings", db.q("select * from league_standings(%s)", lg) == [])
 
+    print("Badges")
+    db.as_user(None)
+    starter = db.one("select kicker_id from lineups where team_id = %s and week = %s limit 1", bob_team, wk)
+    benched = db.one("select kicker_id from rosters where team_id = %s and kicker_id not in "
+                     "(select kicker_id from lineups where team_id = %s and week = %s) limit 1", bob_team, bob_team, wk)
+    db.q("insert into nfl_highlights (id, season, week, game_id, kicker_id, kind, detail) values "
+         "('test_1', %s, %s, 'g', %s, 'onside', 'Onside kick recovered by his team'), "
+         "('test_2', %s, %s, 'g', %s, 'fake_run', 'Ran 6 yards for a first down on a fake'), "
+         "('test_3', %s, 1, 'g', %s, 'onside', 'Before the league started')",
+         season, wk, starter, season, wk, benched, season, starter)
+    awarded = db.one("select award_badges()")
+    badges = {r[0]: (r[1], r[2]) for r in db.q("select highlight_id, team_id, started from league_badges where league_id = %s", lg)}
+    check("starter's badge goes to his team", badges.get("test_1") == (bob_team, True), str(badges))
+    check("bench kicker's badge marked 'from the bench'", badges.get("test_2") == (bob_team, False), str(badges))
+    check("no badge for weeks before the league played", "test_3" not in badges)
+    check("badges posted to Activity", db.one(
+        "select count(*) from transactions where league_id = %s and kind = 'badge'", lg) == 2)
+    check("awarding twice doesn't duplicate", db.one("select award_badges()") == 0 and awarded >= 2)
+    db.as_user(users["bob"])
+    check("league members see badges", db.one("select count(*) from league_badges where league_id = %s", lg) == 2)
+    check("members can't award badges", db.fails("select award_badges()") is not None)
+    db.as_user(users["outsider"])
+    check("outsiders don't see badges", db.one("select count(*) from league_badges where league_id = %s", lg) == 0)
+
     print("Weekly roll + reset")
     db.as_user(None)
     db.q("delete from lineups where league_id = %s and week = %s", lg, wk)

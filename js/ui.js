@@ -11,6 +11,14 @@ const dateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numer
 export const fmtKickoff = (iso) => kickoffFmt.format(new Date(iso));
 export const fmtDate = (iso) => dateFmt.format(new Date(iso));
 
+// League badges for rare kicker moments.
+export const BADGE = {
+  onside: { icon: '🎯', label: 'Onside recovery' },
+  fake_run: { icon: '🎩', label: 'Fake FG run' },
+  fake_pass: { icon: '🎩', label: 'Fake FG pass' },
+};
+export const badgeIcon = (b) => (BADGE[b.kind] || { icon: '🏅' }).icon;
+
 export function toast(message, kind = 'ok') {
   let box = $('#toast');
   if (!box) {

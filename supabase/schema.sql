@@ -82,6 +82,33 @@ alter table public.nfl_games    add column if not exists espn_id text;
 alter table public.kicker_weeks add column if not exists source  text not null default 'official';  -- or 'live'
 alter table public.kicker_weeks add column if not exists game_id text;
 
+-- Rare kicker moments from the official play-by-play (filled by build_data.py --push).
+create table if not exists public.nfl_highlights (
+  id          text primary key,      -- game id + play id
+  season      int  not null,
+  week        int  not null,
+  game_id     text not null,
+  kicker_id   text not null,
+  team        text,
+  kind        text not null,         -- onside / fake_pass / fake_run
+  detail      text not null,         -- "Recovered his own onside kick"
+  description text                   -- the official play description
+);
+
+-- A highlight, awarded to the fantasy team that had that kicker.
+create table if not exists public.league_badges (
+  league_id    uuid not null references public.leagues on delete cascade,
+  highlight_id text not null,
+  team_id      uuid not null references public.teams on delete cascade,
+  kicker_id    text not null,
+  kind         text not null,
+  detail       text not null,
+  week         int  not null,
+  started      boolean not null,     -- in the lineup that week (false = from the bench)
+  created_at   timestamptz not null default now(),
+  primary key (league_id, highlight_id)
+);
+
 -- Status of games the live updater has seen (for the app's Live badge and scores).
 create table if not exists public.live_games (
   game_id    text primary key,
@@ -440,6 +467,7 @@ begin
   delete from waiver_claims where league_id = p_league;
   delete from draft_picks where league_id = p_league;
   delete from transactions where league_id = p_league;
+  delete from league_badges where league_id = p_league;
   update teams set adds_used = 0, draft_slot = null where league_id = p_league;
   update leagues set season = p_season, status = 'setup', start_week = 1, clock_started_at = null
   where id = p_league;
@@ -961,6 +989,37 @@ begin
   return won;
 end $$;
 
+-- Give each new highlight to the fantasy team that had the kicker: his lineup team that week, otherwise
+-- whoever has him now. Only for weeks the league was actually playing. Returns how many were awarded.
+create or replace function public.award_badges() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  with new_badges as (
+    insert into league_badges (league_id, highlight_id, team_id, kicker_id, kind, detail, week, started)
+    select l.id, h.id, coalesce(lu.team_id, r.team_id), h.kicker_id, h.kind, h.detail, h.week, lu.team_id is not null
+    from leagues l
+    join nfl_highlights h on h.season = l.season and h.week >= l.start_week
+    left join lineups lu on lu.league_id = l.id and lu.week = h.week and lu.kicker_id = h.kicker_id
+    left join rosters r on r.league_id = l.id and r.kicker_id = h.kicker_id
+    where l.status in ('active', 'complete')
+      and coalesce(lu.team_id, r.team_id) is not null
+      and h.week >= coalesce((select min(x.week) from lineups x where x.league_id = l.id), 99)
+    on conflict do nothing
+    returning *
+  ), logged as (
+    insert into transactions (league_id, team_id, kind, kicker_id, detail)
+    select league_id, team_id, 'badge', kicker_id,
+           'Badge! ' || kicker_name((select season from leagues where id = league_id), kicker_id) || ': '
+           || lower(left(detail, 1)) || substr(detail, 2) || ' (week ' || week || ')'
+           || case when started then '' else ', from the bench' end
+    from new_badges
+    returning 1
+  )
+  select count(*) into n from logged;
+  return n;
+end $$;
+
 create or replace function public.process_all_waivers() returns void
 language plpgsql security definer set search_path = public as $$
 declare lg uuid;
@@ -990,6 +1049,12 @@ drop policy if exists "public read" on public.nfl_kickers;
 create policy "public read" on public.nfl_kickers  for select using (true);
 drop policy if exists "public read" on public.nfl_games;
 create policy "public read" on public.nfl_games    for select using (true);
+alter table public.nfl_highlights enable row level security;
+drop policy if exists "public read" on public.nfl_highlights;
+create policy "public read" on public.nfl_highlights for select using (true);
+alter table public.league_badges enable row level security;
+drop policy if exists "members read" on public.league_badges;
+create policy "members read" on public.league_badges for select using (is_member(league_id));
 alter table public.live_games enable row level security;
 drop policy if exists "public read" on public.live_games;
 create policy "public read" on public.live_games for select using (true);
@@ -1027,6 +1092,7 @@ revoke execute on function public._drop(public.leagues, uuid, text, int) from pu
 revoke execute on function public._pick(uuid, text, boolean) from public, anon, authenticated;
 revoke execute on function public._auto_choice(uuid, uuid) from public, anon, authenticated;
 revoke execute on function public.process_draft_clocks()   from public, anon, authenticated;
+revoke execute on function public.award_badges()           from public, anon, authenticated;
 revoke execute on function public.handle_new_user()       from public, anon, authenticated;
 
 -------------------------------------------------------------------------------
