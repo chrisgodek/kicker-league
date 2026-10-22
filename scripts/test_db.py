@@ -147,10 +147,25 @@ def run(db):
     # Use kickers who actually play this week (not on bye) so the lock test means something.
     plays = lambda k: db.one("select kicker_kickoff(%s, %s, %s)", season, k, wk) is not None  # noqa: E731
     roster = [r[0] for r in db.q("select kicker_id from rosters where team_id = %s", bob_team)]
+    # The commissioner swaps bye-week kickers for ones who play, so the lock test has real games.
+    db.as_user(users["chris"])
+    free_playing = [r[0] for r in db.q(
+        "select id from nfl_kickers k where season = %s and status = 'active' and not exists "
+        "(select 1 from rosters r where r.league_id = %s and r.kicker_id = k.id) order by name", season, lg) if plays(r[0])]
+    for k in [k for k in roster if not plays(k)][:max(0, 2 - sum(plays(k) for k in roster))]:
+        db.q("select commish_move(%s, %s, null)", lg, k)
+        db.q("select commish_move(%s, %s, %s)", lg, free_playing.pop(0), bob_team)
+    db.as_user(users["bob"])
+    roster = [r[0] for r in db.q("select kicker_id from rosters where team_id = %s", bob_team)]
     playing = [k for k in roster if plays(k)]
     check("bob has at least 2 kickers playing this week", len(playing) >= 2, str(len(playing)))
-    bench, other = playing[0], playing[1]
-    rest = [k for k in roster if k not in (bench, other)][0]
+    # Pick roles so the kicker we lock doesn't share a game with the other two.
+    game = lambda k: db.one("select g.id from nfl_kickers n join nfl_games g on g.season = n.season and g.week = %s "  # noqa: E731
+                            "and n.team in (g.home, g.away) where n.season = %s and n.id = %s", wk, season, k)
+    import itertools
+    bench, other, rest = next((p for p in itertools.permutations(roster)
+                               if plays(p[0]) and plays(p[1]) and game(p[0]) not in (game(p[1]), game(p[2]))),
+                              (playing[0], playing[1], [k for k in roster if k not in playing[:2]][0]))
     db.q("select set_lineup(%s, %s)", bob_team, [rest, other])
     db.q("select set_lineup(%s, %s)", bob_team, [bench, other])
     now_starters = {r[0] for r in db.q("select kicker_id from lineups where team_id = %s and week = %s", bob_team, wk)}
@@ -169,8 +184,8 @@ def run(db):
     db.as_user(users["bob"])
     msg = db.fails("select set_lineup(%s, %s)", bob_team, [starters[0], starters[1]])
     check("locked starter can't be benched", msg is not None and "started" in msg, msg)
-    check("locked starter stays when the other slot changes",
-          db.fails("select set_lineup(%s, %s)", bob_team, [bench, starters[0]]) is None)
+    msg = db.fails("select set_lineup(%s, %s)", bob_team, [bench, starters[0]])
+    check("locked starter stays when the other slot changes", msg is None, msg)
     check("locked kicker can't be moved in from the bench", db.fails(
         "select set_lineup(%s, %s)", users["bob"] and bob_team, [starters[0], starters[1]]) is not None)
     check("locked starter can't be dropped", db.fails("select add_drop(%s, null, %s)", bob_team, bench) is not None)
