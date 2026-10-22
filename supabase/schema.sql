@@ -352,6 +352,27 @@ begin
   end if;
 end $$;
 
+-- Pick a custom invite code (4-12 letters/numbers) or pass null for a new random one.
+-- The old code stops working.
+create or replace function public.set_invite_code(p_league uuid, p_code text) returns text
+language plpgsql security definer set search_path = public as $$
+declare code text := upper(regexp_replace(coalesce(p_code, ''), '\s', '', 'g'));
+begin
+  if not is_commish(p_league) then raise exception 'Commissioner only'; end if;
+  if code = '' then
+    loop
+      code := upper(substr(md5(random()::text), 1, 6));
+      exit when not exists (select 1 from leagues where invite_code = code);
+    end loop;
+  elsif code !~ '^[A-Z0-9]{4,12}$' then
+    raise exception 'Codes are 4 to 12 letters and numbers, no spaces or symbols';
+  elsif exists (select 1 from leagues where invite_code = code and id <> p_league) then
+    raise exception 'That code is taken. Try another';
+  end if;
+  update leagues set invite_code = code where id = p_league;
+  return code;
+end $$;
+
 -- Remove a kicker from a team or put one on a team, bypassing the usual rules.
 create or replace function public.commish_move(p_league uuid, p_kicker text, p_to_team uuid) returns void
 language plpgsql security definer set search_path = public as $$

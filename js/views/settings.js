@@ -14,9 +14,19 @@ export async function renderSettings({ L, reload, root }) {
     <div class="grid-2">
       <div class="card">
         <h2>Invite friends</h2>
-        <p class="muted">Send this link. They create an account and pick a team name.</p>
-        <div class="copy"><input readonly value="${esc(invite)}" id="invite"><button id="copy">Copy</button></div>
-        <p class="muted small">Invite code: <b>${esc(lg.invite_code)}</b></p>
+        <p class="muted">Give them this code. They create an account, click <b>Join a league</b>, and enter it.</p>
+        <div class="invite-code" id="code">${esc(lg.invite_code)}</div>
+        <div class="row">
+          <button id="copy-code">Copy code</button>
+          <button id="copy">Copy invite link</button>
+        </div>
+        ${c ? `
+          <form id="codeform" class="row">
+            <label>Choose your own code <input name="code" maxlength="12" placeholder="KICKERS26" autocapitalize="characters" pattern="[A-Za-z0-9]{4,12}" title="4 to 12 letters and numbers"></label>
+            <button type="submit">Set code</button>
+            <button type="button" id="newcode" class="link">New random code</button>
+          </form>
+          <p class="note">Changing the code stops the old code and link from working. People already in the league stay in.</p>` : ''}
         ${L.myTeam ? `
           <form id="rename" class="row">
             <label>Your team name <input name="name" value="${esc(L.myTeam.name)}" maxlength="40" required></label>
@@ -91,9 +101,26 @@ export async function renderSettings({ L, reload, root }) {
       </div>
     </div>` : ''}`;
 
-  $('#copy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(invite); } catch { $('#invite').select(); document.execCommand('copy'); }
-    toast('Invite link copied');
+  const copy = async (text, label) => {
+    try { await navigator.clipboard.writeText(text); toast(`${label} copied`); } catch { toast(text); }
+  };
+  $('#copy-code').addEventListener('click', () => copy(lg.invite_code, 'Code'));
+  $('#copy').addEventListener('click', () => copy(invite, 'Invite link'));
+  $('#codeform')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    busy(e.target.querySelector('[type=submit]'), async () => {
+      const code = await rpc('set_invite_code', { p_league: L.id, p_code: e.target.code.value });
+      toast(`Invite code is now ${code}`);
+      reload();
+    });
+  });
+  $('#newcode')?.addEventListener('click', async (e) => {
+    if (!(await confirmBox('New random code?', 'The current code and link will stop working.', 'Make new code'))) return;
+    busy(e.target, async () => {
+      const code = await rpc('set_invite_code', { p_league: L.id, p_code: null });
+      toast(`Invite code is now ${code}`);
+      reload();
+    });
   });
   $('#rename')?.addEventListener('submit', (e) => {
     e.preventDefault();

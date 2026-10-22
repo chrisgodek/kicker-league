@@ -87,7 +87,14 @@ def run(db):
     check("outsider can't see the league", db.one("select count(*) from leagues where id = %s", lg) == 0)
     check("outsider sees invite preview", db.one("select name from league_preview(%s)", code.lower()) == "Test League")
 
+    custom = "KT" + uuid.uuid4().hex[:6].upper()
+    db.as_user(users["chris"])
+    check("commissioner sets a custom code", db.one("select set_invite_code(%s, %s)", lg, custom.lower() + " ") == custom)
+    check("bad code rejected", "4 to 12" in (db.fails("select set_invite_code(%s, 'no!')", lg) or ""))
+    check("old code stops working", db.q("select * from league_preview(%s)", code) == [])
+    code = custom
     db.as_user(users["bob"])
+    check("non-commissioner can't change the code", db.fails("select set_invite_code(%s, null)", lg) is not None)
     bob_team = db.one("select join_league(%s, 'Bob Boots')", code)
     check("bob joins with invite code", bob_team is not None)
     check("bob can't join twice", "already" in (db.fails("select join_league(%s, 'Again')", code) or ""))

@@ -211,3 +211,10 @@ dialog h3 { font-size: 1.05rem; }
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: var(--danger); color: #fff; }
+.invite-code {
+  font: 800 2rem/1.1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.12em;
+  padding: 12px 14px; margin: 4px 0 12px; border: 2px dashed var(--line); border-radius: 10px;
+  text-align: center; color: var(--accent); user-select: all; word-break: break-all;
+}
+#codeform { margin-top: 14px; }
+#codeform label { flex: 1; min-width: 160px; }
