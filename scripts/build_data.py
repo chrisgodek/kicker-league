@@ -8,7 +8,8 @@ Pulls nflverse play-by-play, schedule, and roster data for a season and writes:
   data/<season>/kicks.json     every FG / XP attempt (for detail views + auditing)
 
 Standard library only so it runs anywhere (locally or in GitHub Actions).
-Usage: python3 scripts/build_data.py 2026 [2025 ...]
+Usage: python3 scripts/build_data.py [--push] 2026 [2025 ...]
+  --push  also load the season into the Supabase database (needs DATABASE_URL)
 """
 import csv
 import gzip
@@ -194,11 +195,38 @@ def build(season):
     write(out / "stats.json", {"season": season, "updated": updated,
                                "weeksWithData": weeks_done, "stats": stats})
     write(out / "kicks.json", {"season": season, "updated": updated, "kicks": kicks})
+    return kickers, schedule, stats
+
+
+def push(season, kickers, schedule, stats):
+    """Replace this season's NFL data in the database in one transaction."""
+    from db import connect
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("delete from nfl_kickers where season = %s", (season,))
+        cur.executemany(
+            "insert into nfl_kickers (season, id, name, team, status, headshot) values (%s,%s,%s,%s,%s,%s)",
+            [(season, k["id"], k["name"], k["team"], k["status"], k["headshot"]) for k in kickers])
+        cur.execute("delete from nfl_games where season = %s", (season,))
+        cur.executemany(
+            "insert into nfl_games (id, season, week, kickoff, home, away) values (%s,%s,%s,%s,%s,%s)",
+            [(g["id"], season, g["week"], g["kickoff"], g["home"], g["away"]) for g in schedule])
+        cur.execute("delete from kicker_weeks where season = %s", (season,))
+        cur.executemany(
+            "insert into kicker_weeks (season, week, kicker_id, team, fga, fgm, fg50, fg_dist, xpa, xpm, clutch, long)"
+            " values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            [(season, int(w), kid, s["team"], s["fga"], s["fgm"], s["fg50"], s["fgDist"],
+              s["xpa"], s["xpm"], s["clutch"], s["long"])
+             for kid, weeks in stats.items() for w, s in weeks.items()])
+    print(f"  pushed {season}: {len(kickers)} kickers, {len(schedule)} games to the database")
 
 
 if __name__ == "__main__":
     now = datetime.now()
     current = now.year if now.month >= 3 else now.year - 1  # Jan/Feb belong to last season
-    seasons = [int(s) for s in sys.argv[1:]] or [current]
+    args = sys.argv[1:]
+    do_push = "--push" in args
+    seasons = [int(a) for a in args if a != "--push"] or [current]
     for s in seasons:
-        build(s)
+        kickers, schedule, games_stats = build(s)
+        if do_push:
+            push(s, kickers, schedule, games_stats)
