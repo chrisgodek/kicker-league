@@ -218,3 +218,7 @@ dialog h3 { font-size: 1.05rem; }
 }
 #codeform { margin-top: 14px; }
 #codeform label { flex: 1; min-width: 160px; }
+td.score { font-weight: 700; }
+td.score.pos { color: var(--accent); }
+td.score.neg { color: var(--muted); }
+.card-head .controls { margin: 0; }

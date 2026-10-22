@@ -1,7 +1,8 @@
+import { rankKickers, formatScore, SCORE_HELP } from './rank.js';
 import { loadSeason, categoriesFor, kickerTotals, formatStat, gameFor, currentWeek } from './data.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { sort: 'fgm', dir: -1 };
+const state = { sort: 'score', dir: -1 };
 
 const kickoffFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 
@@ -34,7 +35,10 @@ async function render() {
     .filter((k) => $('show').value === 'all' ? stats.stats[k.id] : k.status !== 'non-kicker')
     .map((k) => ({ ...k, t: kickerTotals(stats.stats[k.id], from, to), next: seasonOver ? null : gameFor(schedule, k.team, week) }));
 
-  const sortVal = (r) => state.sort === 'name' ? r.name : (r.t[state.sort] ?? -1);
+  const ranks = rankKickers(new Map(Object.keys(stats.stats).map((id) => [id, kickerTotals(stats.stats[id], from, to)])),
+    { clutch: $('clutch').checked });
+  rows.forEach((r) => { r.score = ranks.get(r.id)?.score ?? null; });
+  const sortVal = (r) => state.sort === 'name' ? r.name : state.sort === 'score' ? (r.score ?? -99) : (r.t[state.sort] ?? -1);
   rows.sort((a, b) => {
     const x = sortVal(a), y = sortVal(b);
     return (typeof x === 'string' ? x.localeCompare(y) : x - y) * state.dir || a.name.localeCompare(b.name);
@@ -42,7 +46,7 @@ async function render() {
 
   const th = (key, label, title = '') =>
     `<th data-sort="${key}" title="${title}" class="${state.sort === key ? 'sorted' : ''}">${label}${state.sort === key ? (state.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
-  $('table').tHead.innerHTML = `<tr>${th('name', 'Kicker')}<th>Team</th>${cats.map((c) => th(c.key, c.label, c.title)).join('')}${th('long', 'Long')}${th('fga', 'FGA')}<th>${seasonOver ? '' : `Wk ${week} game`}</th></tr>`;
+  $('table').tHead.innerHTML = `<tr>${th('name', 'Kicker')}<th>Team</th>${th('score', 'Score', SCORE_HELP)}${cats.map((c) => th(c.key, c.label, c.title)).join('')}${th('long', 'Long')}${th('fga', 'FGA')}<th>${seasonOver ? '' : `Wk ${week} game`}</th></tr>`;
 
   $('table').tBodies[0].innerHTML = rows.map((r) => {
     const opp = r.next ? (r.next.home === r.team ? `vs ${r.next.away}` : `@ ${r.next.home}`) : (seasonOver ? '' : 'BYE');
@@ -51,6 +55,7 @@ async function render() {
     return `<tr>
       <td class="name">${r.name} ${status}</td>
       <td>${r.team}</td>
+      <td class="num score ${r.score >= 0 ? 'pos' : 'neg'}">${formatScore(r.score)}</td>
       ${cats.map((c) => `<td class="num">${formatStat(c.key, r.t[c.key])}</td>`).join('')}
       <td class="num">${r.t.long || '–'}</td>
       <td class="num">${r.t.fga}</td>

@@ -4,6 +4,7 @@ import { $, $$, esc, busy, toast, choose, confirmBox, fmtKickoff, fmtDate } from
 import { loadLeague } from '../league.js';
 import { categoriesFor, formatStat } from '../data.js';
 import { renderDraft } from './draft.js';
+import { statPicker, sortKickers, statHeaders, statCells } from '../statview.js';
 import { renderSettings } from './settings.js';
 
 const TABS = [
@@ -178,12 +179,13 @@ async function renderStandings({ L, root }) {
 // ---------------------------------------------------------------------------- Players
 async function renderPlayers({ L, acting, reload, root }) {
   const cats = categoriesFor({ clutch: L.league.clutch });
-  const state = { filter: sessionStorage.getItem('playerFilter') || 'available', sort: 'fgm' };
+  const picker = await statPicker(L);
+  const state = { filter: sessionStorage.getItem('playerFilter') || 'available', sort: sessionStorage.getItem('playerSort') || 'rank' };
 
   const draw = () => {
     let list = L.kickers.filter((k) => k.status !== 'non-kicker');
     if (state.filter === 'available') list = list.filter((k) => L.availability(k.id).kind !== 'rostered');
-    list.sort((a, b) => (L.stats(b.id)[state.sort] ?? -1) - (L.stats(a.id)[state.sort] ?? -1) || a.name.localeCompare(b.name));
+    sortKickers(list, picker, state.sort);
 
     root.innerHTML = `
       <div class="controls">
@@ -193,13 +195,13 @@ async function renderPlayers({ L, acting, reload, root }) {
             <option value="all" ${state.filter === 'all' ? 'selected' : ''}>All kickers</option>
           </select>
         </label>
+        ${picker.select()}
         ${L.league.status === 'active' && acting ? `<span class="muted">Adds used: ${acting.adds_used}/${L.league.add_limit}</span>` : ''}
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Kicker</th><th>Status</th>${cats.map((c) => `<th class="num sortable ${state.sort === c.key ? 'sorted' : ''}" data-sort="${c.key}" title="${c.title}">${c.label}</th>`).join('')}<th>Wk ${L.week}</th><th></th></tr></thead>
-          <tbody>${list.map((k) => {
-            const s = L.stats(k.id);
+          <thead><tr><th class="num">#</th><th>Kicker</th><th>Status</th>${statHeaders(cats, state.sort)}<th>Wk ${L.week}</th><th></th></tr></thead>
+          <tbody>${list.map((k, i) => {
             const a = L.availability(k.id);
             const m = L.matchup(k.id);
             const where = a.kind === 'rostered' ? esc(a.team.name) : a.kind === 'waivers' ? `Waivers until ${fmtDate(a.until)}` : 'Free agent';
@@ -210,9 +212,10 @@ async function renderPlayers({ L, acting, reload, root }) {
                 : `<button class="primary" data-add="${k.id}">Add</button>`;
             }
             return `<tr>
+              <td class="num muted">${i + 1}</td>
               <td class="name">${esc(k.name)} ${k.status !== 'active' ? `<span class="tag">${esc(k.status)}</span>` : ''}<div class="muted small">${esc(k.team)}</div></td>
               <td class="small">${where}</td>
-              ${cats.map((c) => `<td class="num">${formatStat(c.key, s[c.key])}</td>`).join('')}
+              ${statCells(k.id, picker, cats)}
               <td class="small">${m.text}${m.kickoff ? `<div class="muted">${m.locked ? 'Locked' : fmtKickoff(m.kickoff)}</div>` : ''}</td>
               <td>${action}</td>
             </tr>`;
@@ -221,7 +224,12 @@ async function renderPlayers({ L, acting, reload, root }) {
       </div>`;
 
     $('#pf').addEventListener('change', (e) => { state.filter = e.target.value; sessionStorage.setItem('playerFilter', state.filter); draw(); });
-    $$('[data-sort]', root).forEach((th) => th.addEventListener('click', () => { state.sort = th.dataset.sort; draw(); }));
+    $('#statsfrom').addEventListener('change', (e) => { picker.choice = e.target.value; draw(); });
+    $$('[data-sort]', root).forEach((th) => th.addEventListener('click', () => {
+      state.sort = th.dataset.sort;
+      sessionStorage.setItem('playerSort', state.sort);
+      draw();
+    }));
     $$('[data-add]', root).forEach((b) => b.addEventListener('click', () => pickup(b, b.dataset.add, false)));
     $$('[data-claim]', root).forEach((b) => b.addEventListener('click', () => pickup(b, b.dataset.claim, true)));
   };

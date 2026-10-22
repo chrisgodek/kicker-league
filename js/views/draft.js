@@ -1,6 +1,8 @@
 // Draft tab: order before the draft, live board while drafting (polls every few seconds), results after.
 import { sb, rpc, rows } from '../supa.js';
 import { $, $$, esc, busy, toast } from '../ui.js';
+import { categoriesFor } from '../data.js';
+import { statPicker, sortKickers, statHeaders, statCells } from '../statview.js';
 
 const POLL_MS = 3000;
 
@@ -20,6 +22,10 @@ export async function renderDraft(ctx) {
     return;
   }
 
+  const picker = await statPicker(L);
+  const cats = categoriesFor({ clutch: L.league.clutch });
+  let sort = sessionStorage.getItem('draftSort') || 'rank';
+
   let picks = await rows(sb.from('draft_picks').select('*').eq('league_id', L.id).order('pick_no'));
   let league = L.league;
   let onClock = league.status === 'drafting' ? await rpc('team_on_clock', { p_league: L.id }) : null;
@@ -34,9 +40,7 @@ export async function renderDraft(ctx) {
   const draw = () => {
     const taken = new Set(picks.map((p) => p.kicker_id));
     const canPick = league.status === 'drafting' && (L.isCommish || L.manageable.some((t) => t.id === onClock));
-    const available = L.kickers
-      .filter((k) => k.status !== 'non-kicker' && !taken.has(k.id))
-      .sort((a, b) => (L.stats(b.id).fgm - L.stats(a.id).fgm) || a.name.localeCompare(b.name));
+    const available = sortKickers(L.kickers.filter((k) => k.status !== 'non-kicker' && !taken.has(k.id)), picker, sort);
     const pickBy = new Map(picks.map((p) => [p.pick_no, p]));
     const clockTeam = L.teamById.get(onClock);
 
@@ -60,20 +64,28 @@ export async function renderDraft(ctx) {
       </div>
       ${league.status === 'drafting' ? `
         <div class="card">
-          <h3>Available kickers</h3>
+          <div class="card-head">
+            <h3>Available kickers</h3>
+            <div class="controls">${picker.select()}</div>
+          </div>
           <div class="table-wrap flat"><table>
-            <thead><tr><th>Kicker</th><th class="num">FG</th><th class="num">50+</th><th class="num">XP</th><th class="num">FG%</th><th></th></tr></thead>
-            <tbody>${available.map((k) => {
-              const s = L.stats(k.id);
-              return `<tr><td class="name">${esc(k.name)} ${k.status !== 'active' ? `<span class="tag">${esc(k.status)}</span>` : ''}<div class="muted small">${esc(k.team)}</div></td>
-                <td class="num">${s.fgm}</td><td class="num">${s.fg50}</td><td class="num">${s.xpm}</td>
-                <td class="num">${s.fgPct == null ? '–' : (s.fgPct * 100).toFixed(1)}</td>
-                <td>${canPick ? `<button class="primary" data-pick="${k.id}">Draft</button>` : ''}</td></tr>`;
-            }).join('')}</tbody>
+            <thead><tr><th class="num">#</th><th>Kicker</th>${statHeaders(cats, sort)}<th></th></tr></thead>
+            <tbody>${available.map((k, i) => `<tr>
+                <td class="num muted">${i + 1}</td>
+                <td class="name">${esc(k.name)} ${k.status !== 'active' ? `<span class="tag">${esc(k.status)}</span>` : ''}<div class="muted small">${esc(k.team)}</div></td>
+                ${statCells(k.id, picker, cats)}
+                <td>${canPick ? `<button class="primary" data-pick="${k.id}">Draft</button>` : ''}</td></tr>`).join('')}</tbody>
           </table></div>
+          <p class="note">Click a column to sort. <b>Score</b> = Kicker Score: how far above or below average a kicker is across every category, per game (0 is average, about +5 is elite).</p>
           ${L.isCommish ? '<p class="note">As commissioner you can pick for any team, including placeholders.</p>' : ''}
         </div>` : ''}`;
 
+    $('#statsfrom')?.addEventListener('change', (e) => { picker.choice = e.target.value; draw(); });
+    $$('[data-sort]', root).forEach((th) => th.addEventListener('click', () => {
+      sort = th.dataset.sort;
+      sessionStorage.setItem('draftSort', sort);
+      draw();
+    }));
     $$('[data-pick]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
       await rpc('make_pick', { p_league: L.id, p_kicker: b.dataset.pick });
       await refresh();

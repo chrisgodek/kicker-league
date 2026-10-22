@@ -25,6 +25,7 @@ async function route() {
     if (page === 'league' && a) return await renderLeague(app, user, a, b || 'team');
     return await renderHome(app, user);
   } catch (err) {
+    console.error(err);
     app.innerHTML = `<div class="card"><h2>Something went wrong</h2><p>${esc(err.message)}</p><p><a href="#/">Back to my leagues</a></p></div>`;
   }
 }

@@ -484,7 +484,64 @@ begin
   perform _pick(p_league, p_kicker, false);
 end $$;
 
--- Best available by last season-to-date FG made, then name.
+-- Kicker Score for one season. Same formula as js/rank.js: per-game z-scores for each roto category
+-- (FG%/XP% as makes above average on the same attempts, Avg Dist as yards above average), summed,
+-- then pulled toward average for small samples: × games / (games + 3).
+create or replace function public.kicker_scores(p_season int, p_clutch boolean default false)
+returns table (kicker_id text, score numeric, games int)
+language sql stable set search_path = public as $$
+  with t as (
+    select kw.kicker_id, count(*)::numeric as g, sum(fga) as fga, sum(fgm) as fgm, sum(fg50) as fg50,
+           sum(fg_dist) as fgd, sum(xpa) as xpa, sum(xpm) as xpm, sum(kw.clutch) as cl
+    from kicker_weeks kw where kw.season = p_season group by kw.kicker_id
+  ),
+  lg as (
+    select case when sum(fga) > 0 then sum(fgm)::numeric / sum(fga) else 0 end as fg,
+           case when sum(xpa) > 0 then sum(xpm)::numeric / sum(xpa) else 0 end as xp,
+           case when sum(fgm) > 0 then sum(fgd)::numeric / sum(fgm) else 0 end as dist,
+           max(g) as maxg
+    from t
+  ),
+  p as (
+    select t.kicker_id, t.g,
+           t.fgm / t.g as v_fgm, t.fg50 / t.g as v_fg50, t.xpm / t.g as v_xpm, t.cl / t.g as v_cl,
+           (t.fgm - t.fga * lg.fg) / t.g as v_fgp, (t.xpm - t.xpa * lg.xp) / t.g as v_xpp,
+           (t.fgd - t.fgm * lg.dist) / t.g as v_dist,
+           t.g >= least(4, ceil(lg.maxg / 2.0)) as base
+    from t, lg
+  ),
+  n as (
+    select avg(v_fgm) as m1, coalesce(nullif(stddev_pop(v_fgm), 0), 1) as s1,
+           avg(v_fg50) as m2, coalesce(nullif(stddev_pop(v_fg50), 0), 1) as s2,
+           avg(v_xpm) as m3, coalesce(nullif(stddev_pop(v_xpm), 0), 1) as s3,
+           avg(v_fgp) as m4, coalesce(nullif(stddev_pop(v_fgp), 0), 1) as s4,
+           avg(v_xpp) as m5, coalesce(nullif(stddev_pop(v_xpp), 0), 1) as s5,
+           avg(v_dist) as m6, coalesce(nullif(stddev_pop(v_dist), 0), 1) as s6,
+           avg(v_cl) as m7, coalesce(nullif(stddev_pop(v_cl), 0), 1) as s7
+    from p where base
+  )
+  select p.kicker_id,
+         ((v_fgm - m1) / s1 + (v_fg50 - m2) / s2 + (v_xpm - m3) / s3 + (v_fgp - m4) / s4
+          + (v_xpp - m5) / s5 + (v_dist - m6) / s6 + case when p_clutch then (v_cl - m7) / s7 else 0 end)
+         * p.g / (p.g + 3),
+         p.g::int
+  from p, n;
+$$;
+
+-- Blend of the last three seasons with data (weights 3:2:1, newest first), like the app's "3-year blend".
+create or replace function public.kicker_scores_blend(p_season int, p_clutch boolean default false)
+returns table (kicker_id text, score numeric)
+language sql stable set search_path = public as $$
+  with seasons as (
+    select season, row_number() over (order by season desc) as rn
+    from (select distinct season from kicker_weeks where season between p_season - 3 and p_season) s
+  )
+  select ks.kicker_id, sum(ks.score * (4 - se.rn)) / sum(4 - se.rn)
+  from seasons se cross join lateral kicker_scores(se.season, p_clutch) ks
+  where se.rn <= 3
+  group by ks.kicker_id;
+$$;
+
 -- Anyone in the league can trigger this once the pick clock runs out; the team on the
 -- clock or the commissioner can use it any time.
 create or replace function public.auto_pick(p_league uuid) returns void
@@ -497,12 +554,12 @@ begin
           or (is_member(p_league) and now() >= lg.clock_started_at + make_interval(secs => lg.pick_seconds))) then
     raise exception 'The pick clock hasn''t run out';
   end if;
+  -- Best available by 3-year blended Kicker Score.
   select nk.id into k from nfl_kickers nk
-  left join (select kicker_id, sum(fgm) as fgm from kicker_weeks where season = lg.season group by kicker_id) s
-    on s.kicker_id = nk.id
+  left join kicker_scores_blend(lg.season, lg.clutch) s on s.kicker_id = nk.id
   where nk.season = lg.season and nk.status = 'active'
     and not exists (select 1 from rosters r where r.league_id = p_league and r.kicker_id = nk.id)
-  order by coalesce(s.fgm, 0) desc, nk.name
+  order by coalesce(s.score, -99) desc, nk.name
   limit 1;
   if k is null then raise exception 'No kickers left'; end if;
   perform _pick(p_league, k, true);
