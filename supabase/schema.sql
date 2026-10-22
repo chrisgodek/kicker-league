@@ -717,9 +717,9 @@ language sql stable security definer set search_path = public as $$
   )
   select p.team_id, p.team_name, p.owner, p.fgm, p.fg50, p.xpm, p.clutch, p.fga, p.xpa, p.fg_dist,
     p.fg_pct, p.xp_pct, p.avg_dist, p.weeks,
-    p.p_fgm, p.p_fg50, p.p_xpm, p.p_fg, p.p_xp, p.p_dist,
-    case when lg.clutch then p.p_clutch else 0 end,
-    p.p_fgm + p.p_fg50 + p.p_xpm + p.p_fg + p.p_xp + p.p_dist + case when lg.clutch then p.p_clutch else 0 end
+    round(p.p_fgm, 1), round(p.p_fg50, 1), round(p.p_xpm, 1), round(p.p_fg, 1), round(p.p_xp, 1), round(p.p_dist, 1),
+    round(case when lg.clutch then p.p_clutch else 0 end, 1),
+    round(p.p_fgm + p.p_fg50 + p.p_xpm + p.p_fg + p.p_xp + p.p_dist + case when lg.clutch then p.p_clutch else 0 end, 1)
   from pts p, lg
   where is_member(p_league) or auth.role() is null   -- no role = server jobs (cron)
   order by 22 desc, p.team_name;
